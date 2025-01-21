@@ -1,6 +1,6 @@
 # React Native Passkeys Example
 
-This repo is an example app of how to use passkeys with zerodev sdk.
+This repo is a sample app demonstrating how to use passkeys with the ZeroDev SDK.
 
 ## Installation
 
