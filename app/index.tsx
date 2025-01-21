@@ -15,12 +15,16 @@ import React from "react"
 import base64 from "@hexagon/base64"
 import {
     Base64URLString,
-    PublicKeyCredentialUserEntityJSON
+    PublicKeyCredentialUserEntityJSON,
+    RegistrationResponseJSON
 } from "@simplewebauthn/typescript-types"
-import { WebAuthnKey } from "@zerodev/webauthn-key"
-import { parseCred } from "../utils/parseCred"
 import { Address, createPublicClient, http, zeroAddress } from "viem"
 import { sepolia } from "viem/chains"
+import { toWebAuthnKey, WebAuthnKey } from "@zerodev/webauthn-key"
+import {
+    parsePasskeyCred,
+    signMessageWithReactNativePasskeys
+} from "@zerodev/react-native-passkeys-utils"
 import {
     PasskeyValidatorContractVersion,
     toPasskeyValidator
@@ -115,7 +119,7 @@ let webAuthnKey: WebAuthnKey
 export default function App() {
     const insets = useSafeAreaInsets()
 
-    const [result, setResult] = React.useState()
+    const [result, setResult] = React.useState<any>(null)
     const [creationResponse, setCreationResponse] = React.useState<
         | NonNullable<Awaited<ReturnType<typeof passkey.create>>>["response"]
         | null
@@ -135,6 +139,10 @@ export default function App() {
                 })
             })
 
+            if (!json) {
+                throw new Error("No response from passkey.create")
+            }
+
             console.log("creation json -", json)
 
             if (json?.rawId) setCredentialId(json.rawId)
@@ -142,7 +150,18 @@ export default function App() {
 
             setResult(json)
 
-            webAuthnKey = await parseCred(json)
+            const parsedKey = await parsePasskeyCred(
+                json as unknown as RegistrationResponseJSON,
+                rp.id
+            )
+
+            webAuthnKey = await toWebAuthnKey({
+                webAuthnKey: {
+                    ...parsedKey,
+                    signMessageCallback: signMessageWithReactNativePasskeys
+                },
+                rpID: rp.id
+            })
         } catch (e) {
             console.error("create error", e)
         }
@@ -322,7 +341,10 @@ export default function App() {
                             onPress={() => {
                                 alert(
                                     "Public Key",
-                                    creationResponse?.getPublicKey() as Uint8Array
+                                    Buffer.from(
+                                        creationResponse?.publicKey ??
+                                            new Uint8Array()
+                                    ).toString("hex")
                                 )
                             }}
                         >

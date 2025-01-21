@@ -1,50 +1,171 @@
-# Welcome to your Expo app 👋
+# React Native Passkeys Example
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+This repo is an example app of how to use passkeys with zerodev sdk.
 
-## Get started
-
-1. Install dependencies
-
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-    npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+## Installation
 
 ```bash
-npm run reset-project
+npm install
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+## Zerodev Integration
 
-## Learn more
+### Using Custom Library
 
-To learn more about developing your project with Expo, look at the following resources:
+You can use any custom library you want to integrate passkeys with your app. But you might need to implement your own logic for `parsePasskeyCred` and `signMessageCallback`. Refer to the [react-native-passkeys-utils](https://github.com/zerodevapp/sdk/tree/main/plugins/react-native-passkeys-utils) for more details. You can use the following code if you use [react-native-passkeys](https://github.com/peterferguson/react-native-passkeys) library.
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+```typescript
+import { toWebAuthnKey, WebAuthnKey } from "@zerodev/webauthn-key"
+import {
+    parsePasskeyCred,
+    signMessageWithReactNativePasskeys
+} from "@zerodev/react-native-passkeys-utils"
 
-## Join the community
+const parsedKey = await parsePasskeyCred(
+    json as unknown as RegistrationResponseJSON,
+    rp.id
+)
 
-Join our community of developers creating universal apps.
+webAuthnKey = await toWebAuthnKey({
+    webAuthnKey: {
+        ...parsedKey,
+        signMessageCallback: signMessageWithReactNativePasskeys
+    },
+    rpID: rp.id
+})
+```
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+## iOS Setup
+
+#### 1. Host an Apple App Site Association (AASA) file
+
+For Passkeys to work on iOS, you'll need to host an AASA file on your domain. This file is used to verify that your app is allowed to handle the domain you are trying to authenticate with. This must be hosted on a site with a valid SSL certificate.
+
+The file should be hosted at:
+
+```
+https://<your_domain>/.well-known/apple-app-site-association
+```
+
+Note there is no `.json` extension for this file but the format is json. The contents of the file should look something like this:
+
+```json
+{
+    "webcredentials": {
+        "apps": ["<teamID>.<bundleID>"]
+    }
+}
+```
+
+Replace `<teamID>` with your Apple Team ID and `<bundleID>` with your app's bundle identifier.
+
+#### 2. Add Associated Domains
+
+Add the following to your `app.config.ts`:
+
+```typescript
+export default ({ config }: ConfigContext): ExpoConfig => {
+    return {
+        ...config,
+        // ...
+        ios: {
+            associatedDomains: ["webcredentials:<your_domain>"]
+        }
+    }
+}
+```
+
+Replace `<your_domain>` with the domain you are hosting the AASA file on. For example, if you are hosting the AASA file on `https://example.com/.well-known/apple-app-site-association`, you would add `example.com` to the `associatedDomains` array.
+
+#### 3. Add minimum deployment target
+
+Add the following to your `app.config.ts`:
+
+```typescript
+export default ({ config }: ConfigContext): ExpoConfig => {
+    return {
+        ...config,
+        // ...
+        plugins: [
+            // ...
+            [
+                "expo-build-properties",
+                {
+                    ios: {
+                        deploymentTarget: "15.0"
+                    }
+                }
+            ]
+        ]
+    }
+}
+```
+
+#### 4. Prebuild and run your app
+
+```sh
+npx expo prebuild -p ios
+npx expo run:ios # or build in the cloud with EAS
+```
+
+## Android Setup
+
+#### 1. Host an `assetlinks.json` File
+
+For Passkeys to work on Android, you'll need to host an `assetlinks.json` file on your domain. This file is used to verify that your app is allowed to handle the domain you are trying to authenticate with. This must be hosted on a site with a valid SSL certificate.
+
+The file should be hosted at:
+
+```
+https://<your_domain>/.well-known/assetlinks.json
+```
+
+and should look something like this (you can generate this file using the [Android Asset Links Assistant](https://developers.google.com/digital-asset-links/tools/generator)):
+
+```json
+[
+    {
+        "relation": ["delegate_permission/common.handle_all_urls"],
+        "target": {
+            "namespace": "android_app",
+            "package_name": "<package_name>",
+            "sha256_cert_fingerprints": ["<sha256_cert_fingerprint>"]
+        }
+    }
+]
+```
+
+Replace `<package_name>` with your app's package name and `<sha256_cert_fingerprint>` with your app's SHA256 certificate fingerprint.
+
+_Note: if you’re testing the app on your local machine, make sure you use the debug SHA256 fingerprint._
+
+#### 2. Modify Expo Build Properties
+
+Next, you'll need to modify the `compileSdkVersion` in your `app.json` to be at least 34.
+
+```typescript
+export default ({ config }: ConfigContext): ExpoConfig => {
+    return {
+        ...config,
+        // ...
+        plugins: [
+            // ...
+            [
+                "expo-build-properties",
+                {
+                    android: {
+                        compileSdkVersion: 34
+                    }
+                }
+            ]
+        ]
+    }
+}
+```
+
+#### 3. Prebuild and run your app
+
+```sh
+npx expo prebuild -p android
+npx expo run:android # or build in the cloud with EAS
+```
