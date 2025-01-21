@@ -35,6 +35,10 @@ webAuthnKey = await toWebAuthnKey({
 })
 ```
 
+### Running a passkey server
+
+Passkey accounts require public keys of the passkey to derive the corresponding smart account address. So, you may need to run a passkey server to store your user's passkeys. Since public keys are only retrieved during the creation process -- not during authentication or login -- you must store these public keys on your server if you want to construct a passkey account when authentication. Here is a reference implementation of a passkey server: [passkey-server](https://github.com/zerodevapp/passkey-server/blob/main/src/routes/v4.ts).
+
 ## iOS Setup
 
 #### 1. Host an Apple App Site Association (AASA) file
