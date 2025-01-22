@@ -1,5 +1,8 @@
 import { ConfigContext, ExpoConfig } from "expo/config"
 
+const hostname = "example.com"
+const bundleIdentifier = "com.example"
+
 export default ({ config }: ConfigContext): ExpoConfig => {
     return {
         ...config,
@@ -13,7 +16,13 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         userInterfaceStyle: "automatic",
         newArchEnabled: true,
         ios: {
-            supportsTablet: true
+            supportsTablet: true,
+            bundleIdentifier,
+            associatedDomains: [
+                `applinks:${hostname}`,
+                `webcredentials:${hostname}`
+            ],
+            infoPlist: { UIBackgroundModes: ["fetch", "remote-notification"] }
         },
         android: {
             adaptiveIcon: {
