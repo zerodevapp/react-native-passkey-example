@@ -29,7 +29,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
                 foregroundImage: "./assets/images/adaptive-icon.png",
                 backgroundColor: "#ffffff"
             },
-            package: "PACKAGE_NAME"
+            package: "com.example"
         },
         web: {
             bundler: "metro",

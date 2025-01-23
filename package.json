@@ -24,7 +24,7 @@
         "@zerodev/sdk": "^5.4.12",
         "@zerodev/passkey-validator": "^5.5.2",
         "@zerodev/webauthn-key": "^5.4.2",
-        "@zerodev/react-native-passkeys-utils": "^5.4.0",
+        "@zerodev/react-native-passkeys-utils": "^5.4.2",
         "asn1js": "^3.0.5",
         "buffer": "^6.0.3",
         "expo": "~52.0.25",

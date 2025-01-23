@@ -1,5 +1,4 @@
 import {
-    Linking,
     Platform,
     Pressable,
     ScrollView,
@@ -14,17 +13,18 @@ import alert from "../utils/alert"
 import React from "react"
 import base64 from "@hexagon/base64"
 import {
+    AuthenticationResponseJSON,
     Base64URLString,
-    PublicKeyCredentialUserEntityJSON,
     RegistrationResponseJSON
 } from "@simplewebauthn/typescript-types"
-import { Address, createPublicClient, http, zeroAddress } from "viem"
-import { sepolia } from "viem/chains"
 import { toWebAuthnKey, WebAuthnKey } from "@zerodev/webauthn-key"
 import {
     parsePasskeyCred,
+    parseLoginCred,
     signMessageWithReactNativePasskeys
 } from "@zerodev/react-native-passkeys-utils"
+import { Address, createPublicClient, http, keccak256, zeroAddress } from "viem"
+import { sepolia } from "viem/chains"
 import {
     PasskeyValidatorContractVersion,
     toPasskeyValidator
@@ -40,6 +40,9 @@ import {
     entryPoint07Address,
     EntryPointVersion
 } from "viem/account-abstraction"
+
+// passkey server url
+const PASSKEY_SERVER_URL = "YOUR_PASSKEY_SERVER_URL"
 
 // ZeroDev related
 const BUNDLER_RPC = "BUNDLER_RPC"
@@ -96,23 +99,9 @@ export function base64UrlToString(base64urlString: Base64URLString): string {
 }
 
 const rp = {
-    id: "RP_ID",
-    name: "RP_NAME"
+    id: "example.com",
+    name: "EXAMPLE_APP"
 } satisfies PublicKeyCredentialRpEntity
-
-// Don't do this in production!
-const challenge = bufferToBase64URLString(utf8StringToBuffer("fizz"))
-
-const user = {
-    id: bufferToBase64URLString(utf8StringToBuffer("290283490")),
-    displayName: "username",
-    name: "username"
-} satisfies PublicKeyCredentialUserEntityJSON
-
-const authenticatorSelection = {
-    userVerification: "required",
-    residentKey: "required"
-} satisfies AuthenticatorSelectionCriteria
 
 let webAuthnKey: WebAuthnKey
 
@@ -124,34 +113,72 @@ export default function App() {
         | NonNullable<Awaited<ReturnType<typeof passkey.create>>>["response"]
         | null
     >(null)
+    const [loginResponse, setLoginResponse] = React.useState<
+        NonNullable<Awaited<ReturnType<typeof passkey.get>>>["response"] | null
+    >(null)
     const [credentialId, setCredentialId] = React.useState("")
 
     const createPasskey = async () => {
         try {
-            const json = await passkey.create({
-                challenge,
-                pubKeyCredParams: [{ alg: -7, type: "public-key" }],
-                rp,
-                user,
-                authenticatorSelection,
+            // 1) Fetch registration options from server
+            const registrationOptions = await fetch(
+                `${PASSKEY_SERVER_URL}/generate-registration-options`,
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        userName: "charlie"
+                    })
+                }
+            ).then((res) => res.json())
+
+            // 2) Now call passkey.create(...) with the data from server
+            const creationResponse = await passkey.create({
+                challenge: registrationOptions.challenge,
+                pubKeyCredParams: registrationOptions.pubKeyCredParams,
+                rp: registrationOptions.rp,
+                user: {
+                    id: registrationOptions.user.id,
+                    name: registrationOptions.user.name,
+                    displayName: registrationOptions.user.displayName
+                },
+                authenticatorSelection:
+                    registrationOptions.authenticatorSelection,
                 ...(Platform.OS !== "android" && {
                     extensions: { largeBlob: { support: "required" } }
                 })
             })
 
-            if (!json) {
+            console.log("creation response -", creationResponse)
+
+            if (!creationResponse) {
                 throw new Error("No response from passkey.create")
             }
 
-            console.log("creation json -", json)
+            if (creationResponse?.rawId) setCredentialId(creationResponse.rawId)
+            if (creationResponse?.response)
+                setCreationResponse(creationResponse.response)
 
-            if (json?.rawId) setCredentialId(json.rawId)
-            if (json?.response) setCreationResponse(json.response)
+            setResult(creationResponse)
 
-            setResult(json)
+            // 3) Send passkey response to server to verify & store
+            await fetch(`${PASSKEY_SERVER_URL}/verify-registration`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    userId: registrationOptions.user.id,
+                    credential: creationResponse
+                })
+            })
+                .then((r) => r.json())
+                .then((res) => {
+                    console.log("Server verify-registration response:", res)
+                    if (res.error) alert("Registration failed", res.error)
+                })
 
-            const parsedKey = await parsePasskeyCred(
-                json as unknown as RegistrationResponseJSON,
+            // 4) Parse passkey to build WebAuthnKey for ZeroDev usage
+            const parsedKey = parsePasskeyCred(
+                creationResponse as unknown as RegistrationResponseJSON,
                 rp.id
             )
 
@@ -164,71 +191,81 @@ export default function App() {
             })
         } catch (e) {
             console.error("create error", e)
+            alert("Failed to create passkey", String(e))
         }
     }
 
+    /**
+     * 2. Login: get challenge from server, call passkey.get, then verify
+     */
     const authenticatePasskey = async () => {
-        const json = await passkey.get({
-            rpId: rp.id,
-            challenge
-        })
+        try {
+            // 1) Fetch login options from server
+            const loginOptions = await fetch(
+                `${PASSKEY_SERVER_URL}/generate-login-options`
+            ).then((res) => res.json())
 
-        console.log("authentication json -", json)
+            if (loginOptions?.error) {
+                alert("Error generating login options", loginOptions.error)
+                return
+            }
 
-        setResult(json)
+            // 2) call passkey.get(...) with data from server
+            const loginResponse = await passkey.get({
+                rpId: rp.id,
+                challenge: loginOptions.challenge,
+                allowCredentials: loginOptions.allowCredentials,
+                userVerification: loginOptions.userVerification
+            })
+
+            if (loginResponse?.rawId) setCredentialId(loginResponse.rawId)
+            if (loginResponse?.response)
+                setLoginResponse(loginResponse.response)
+
+            setResult(loginResponse)
+
+            // 3) send to server to verify
+            const verifyResponse = await fetch(
+                `${PASSKEY_SERVER_URL}/verify-login`,
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        credential: loginResponse,
+                        challenge: loginOptions.challenge
+                    })
+                }
+            ).then((r) => r.json())
+
+            const parsedKey = parseLoginCred(
+                loginResponse as unknown as AuthenticationResponseJSON,
+                verifyResponse.xHex,
+                verifyResponse.yHex,
+                rp.id
+            )
+
+            webAuthnKey = await toWebAuthnKey({
+                webAuthnKey: {
+                    ...parsedKey,
+                    signMessageCallback: signMessageWithReactNativePasskeys
+                },
+                rpID: rp.id
+            })
+        } catch (err) {
+            console.error("authenticatePasskey error", err)
+            alert("Failed to authenticate passkey", String(err))
+        }
     }
 
-    const writeBlob = async () => {
-        console.log("user credential id -", credentialId)
-        if (!credentialId) {
-            alert(
-                "No user credential id found - large blob requires a selected credential"
-            )
+    /**
+     * 3. Example ZeroDev userOp with the newly created WebAuthn key
+     */
+    const sendUserOp = async () => {
+        if (!webAuthnKey) {
+            alert("No webAuthnKey found. Register a passkey first.")
             return
         }
 
-        const json = await passkey.get({
-            rpId: rp.id,
-            challenge,
-            extensions: {
-                largeBlob: {
-                    write: bufferToBase64URLString(
-                        utf8StringToBuffer("Hey its a private key!")
-                    )
-                }
-            },
-            ...(credentialId && {
-                allowCredentials: [{ id: credentialId, type: "public-key" }]
-            })
-        })
-
-        console.log("add blob json -", json)
-
-        const written = json?.clientExtensionResults?.largeBlob?.written
-        if (written) alert("This blob was written to the passkey")
-
-        setResult(json)
-    }
-
-    const readBlob = async () => {
-        const json = await passkey.get({
-            rpId: rp.id,
-            challenge,
-            extensions: { largeBlob: { read: true } },
-            ...(credentialId && {
-                allowCredentials: [{ id: credentialId, type: "public-key" }]
-            })
-        })
-
-        console.log("read blob json -", json)
-
-        const blob = json?.clientExtensionResults?.largeBlob?.blob
-        if (blob) alert("This passkey has blob", base64UrlToString(blob))
-
-        setResult(json)
-    }
-
-    const sendUserOp = async () => {
         const passkeyValidator = await toPasskeyValidator(publicClient, {
             webAuthnKey,
             entryPoint,
@@ -311,15 +348,9 @@ export default function App() {
                         style={styles.button}
                         onPress={authenticatePasskey}
                     >
-                        <Text>Authenticate</Text>
+                        <Text>Login</Text>
                     </Pressable>
-                    <Pressable style={styles.button} onPress={writeBlob}>
-                        <Text>Add Blob</Text>
-                    </Pressable>
-                    <Pressable style={styles.button} onPress={readBlob}>
-                        <Text>Read Blob</Text>
-                    </Pressable>
-                    {creationResponse && (
+                    {(creationResponse || loginResponse) && (
                         <Pressable
                             style={styles.button}
                             onPress={async () => {
@@ -333,22 +364,6 @@ export default function App() {
                             }}
                         >
                             <Text>Send UserOp</Text>
-                        </Pressable>
-                    )}
-                    {creationResponse && (
-                        <Pressable
-                            style={styles.button}
-                            onPress={() => {
-                                alert(
-                                    "Public Key",
-                                    Buffer.from(
-                                        creationResponse?.publicKey ??
-                                            new Uint8Array()
-                                    ).toString("hex")
-                                )
-                            }}
-                        >
-                            <Text>Get PublicKey</Text>
                         </Pressable>
                     )}
                 </View>
